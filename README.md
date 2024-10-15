@@ -9,22 +9,22 @@ For `SenseVoice`, visit [SenseVoice repo](https://github.com/FunAudioLLM/SenseVo
 **Clone and install**
 
 - Clone the repo
-``` sh
-git clone --recursive https://github.com/FunAudioLLM/CosyVoice.git
+```sh
+git clone --recursive https://github.com/dlion168/CosyVoice-TTS.git
 # If you failed to clone submodule due to network failures, please run following command until success
-cd CosyVoice
+cd CosyVoice-TTS
 git submodule update --init --recursive
 ```
 
 - Install Conda: please see https://docs.conda.io/en/latest/miniconda.html
 - Create Conda env:
 
-``` sh
-conda create -n cosyvoice python=3.8
+```sh
+conda create -y -n cosyvoice python=3.8
 conda activate cosyvoice
 # pynini is required by WeTextProcessing, use conda to install it as it can be executed on all platform.
 conda install -y -c conda-forge pynini==2.1.5
-pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host=mirrors.aliyun.com
+pip install -r requirements.txt
 
 # If you encounter sox compatibility issues
 # ubuntu
@@ -39,7 +39,7 @@ We strongly recommend that you download our pretrained `CosyVoice-300M` `CosyVoi
 
 If you are expert in this field, and you are only interested in training your own CosyVoice model from scratch, you can skip this step.
 
-``` python
+```python
 # SDK模型下载
 from modelscope import snapshot_download
 snapshot_download('iic/CosyVoice-300M', local_dir='pretrained_models/CosyVoice-300M')
@@ -48,7 +48,7 @@ snapshot_download('iic/CosyVoice-300M-Instruct', local_dir='pretrained_models/Co
 snapshot_download('iic/CosyVoice-ttsfrd', local_dir='pretrained_models/CosyVoice-ttsfrd')
 ```
 
-``` sh
+```sh
 # git模型下载，请确保已安装git lfs
 mkdir -p pretrained_models
 git clone https://www.modelscope.cn/iic/CosyVoice-300M.git pretrained_models/CosyVoice-300M
@@ -61,7 +61,7 @@ Optionaly, you can unzip `ttsfrd` resouce and install `ttsfrd` package for bette
 
 Notice that this step is not necessary. If you do not install `ttsfrd` package, we will use WeTextProcessing by default.
 
-``` sh
+```sh
 cd pretrained_models/CosyVoice-ttsfrd/
 unzip resource.zip -d .
 pip install ttsfrd-0.3.6-cp38-cp38-linux_x86_64.whl
@@ -74,11 +74,11 @@ For sft inference, please use `CosyVoice-300M-SFT` model.
 For instruct inference, please use `CosyVoice-300M-Instruct` model.
 First, add `third_party/Matcha-TTS` to your `PYTHONPATH`.
 
-``` sh
+```sh
 export PYTHONPATH=third_party/Matcha-TTS
 ```
 
-``` python
+```python
 from cosyvoice.cli.cosyvoice import CosyVoice
 from cosyvoice.utils.file_utils import load_wav
 import torchaudio
@@ -112,7 +112,7 @@ We support sft/zero_shot/cross_lingual/instruct inference in web demo.
 
 Please see the demo website for details.
 
-``` python
+```python
 # change iic/CosyVoice-300M-SFT for sft inference, or iic/CosyVoice-300M-Instruct for instruct inference
 python3 webui.py --port 50000 --model_dir pretrained_models/CosyVoice-300M
 ```
@@ -127,7 +127,7 @@ You can get familiar with CosyVoice following this recipie.
 Optionally, if you want to use grpc for service deployment,
 you can run following steps. Otherwise, you can just ignore this step.
 
-``` sh
+```sh
 cd runtime/python
 docker build -t cosyvoice:v1.0 .
 # change iic/CosyVoice-300M to iic/CosyVoice-300M-Instruct if you want to use instruct inference
