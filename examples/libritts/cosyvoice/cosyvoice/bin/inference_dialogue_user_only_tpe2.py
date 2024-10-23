@@ -13,6 +13,7 @@ from torch.utils.data import DataLoader
 from cosyvoice.cli.model import CosyVoiceModel
 from cosyvoice.dataset.dataset import DataList, Processor
 from cosyvoice.utils.file_utils import read_lists, read_json_lists
+from cosyvoice.utils.normalize import CosyVoiceNormalizer
 
 def get_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='inference with your model')
@@ -98,8 +99,10 @@ def main():
     args = get_args()
     device = get_device(args)
     configs = read_config(args)
+    random.seed(1234)
 
     model = load_model(args, configs)
+    normalizer = CosyVoiceNormalizer()
     all_possible_references = read_json_lists(args.prompt_utt2data).keys()
 
     os.makedirs(args.result_dir, exist_ok=True)
@@ -108,17 +111,17 @@ def main():
         inference_segment = all_data[args.start_index: args.start_index + args.num_example]
 
         for index, dialouge in tqdm(enumerate(inference_segment)):
+            dialogue_index = index + args.start_index
+            if os.path.exists(os.path.join(args.result_dir, f"{dialogue_index}_meta.json")):
+                continue
+            
             dialogue = json.loads(dialouge.strip())
             user_reference = random_sample_reference(all_possible_references)
-            machine_reference = random_sample_reference(all_possible_references)
-            ref_mapping = {user_reference: 'User', machine_reference: 'Machine'}
+            ref_mapping = {user_reference: 'User'}
 
             tts_data = {
                 user_reference: [
-                    dialogue[key] for key in dialogue.keys() if key.startswith('User_')
-                ],
-                machine_reference: [
-                    dialogue[key] for key in dialogue.keys() if key.startswith('Machine_')
+                    normalizer.text_normalize(dialogue[key]) for key in dialogue.keys() if key.startswith('User_')
                 ]
             }
 
@@ -126,15 +129,8 @@ def main():
             test_dataloader = DataLoader(test_dataset, batch_size=None, num_workers=0)
 
             speechs = {
-                'User': [],
-                'Machine': []
+                'User': []
             }
-
-            dialogue_index = index + args.start_index
-            merge_tts_key = '{:06d}_all'.format(dialogue_index)
-            merge_tts_fn = os.path.join(args.result_dir, '{}.wav'.format(merge_tts_key))
-            if os.path.exists(merge_tts_fn):
-                continue
 
             with torch.no_grad():
                 for _, batch in enumerate(test_dataloader):
@@ -168,31 +164,15 @@ def main():
                         continue
 
                     tts_speeches = []
-                    # print(model.inference(**model_input))
-                    # for model_output in model.inference(**model_input):
-                    #     tts_speeches.append(model_output['tts_speech'])
                     model_output = model.inference(**model_input)
-                    print(type(model_output['tts_speech']))
-                    print(model_output['tts_speech'].shape)
                     tts_speeches.append(model_output['tts_speech'])
                     speechs[ref_mapping[utts[0]]].append(model_output['tts_speech'])
 
-                    # print("utts: {}".format(utts[0]))
-                    # print("tts_index: {}".format(tts_index[0]))
                     tts_speeches = torch.concat(tts_speeches, dim=1)
                     torchaudio.save(tts_fn, tts_speeches, sample_rate=22050)
 
-            tts_key = '{:06d}_all'.format(dialogue_index)
-            tts_fn = os.path.join(args.result_dir, '{}.wav'.format(tts_key))
-            if len(speechs['User']) != 7 or len(speechs['Machine']) != 7:
-                user_files = [os.path.join(args.result_dir, '{:06d}_User_{}.wav'.format(dialogue_index, i)) for i in range(7)]
-                machine_files = [os.path.join(args.result_dir, '{:06d}_Machine_{}.wav'.format(dialogue_index, i)) for i in range(7)]
-                speechs = {
-                    'User': [torchaudio.load(f)[0] for f in user_files],
-                    'Machine': [torchaudio.load(f)[0] for f in machine_files]
-                }
-            merged_speeches = merge_speechs(speechs)
-            torchaudio.save(tts_fn, merged_speeches, sample_rate=22050)
+            with open(os.path.join(args.result_dir, f"{dialogue_index}_meta.json"), "w") as outfile: 
+                json.dump({"User": user_reference}, outfile)
 
 if __name__ == "__main__":
     main()

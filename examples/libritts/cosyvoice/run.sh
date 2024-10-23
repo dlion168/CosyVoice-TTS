@@ -76,18 +76,18 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
   #     --result_dir `pwd`/exp/cosyvoice/test-clean/$mode
   # done
   # for mode in sft zero_shot; do
-  for mode in sft; do
-    for x in ml2021_reference; do
+  for mode in zero_shot; do
+    for x in MTK-100; do
       python cosyvoice/bin/inference.py --mode $mode \
       --gpu 0 \
       --config conf/cosyvoice.yaml \
       --prompt_data data/$x/parquet/data.list \
       --prompt_utt2data data/$x/parquet/utt2data.list \
-      --tts_text `pwd`/tts_text.json \
+      --tts_text `pwd`/soundon_text.json \
       --llm_model $pretrained_model_dir/../llm_v2.pt \
       --flow_model $pretrained_model_dir/flow.pt \
       --hifigan_model $pretrained_model_dir/hift.pt \
-      --result_dir `pwd`/exp/cosyvoice/testcase/sft
+      --result_dir `pwd`/exp/cosyvoice/testcase/MTK-100
     done
   done
 fi
