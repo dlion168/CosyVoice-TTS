@@ -173,6 +173,9 @@ def main():
                 os.makedirs(dialogue_output_dir, exist_ok=True)
                 tts_fn = os.path.join(dialogue_output_dir, f'{tts_key}.wav')
                 
+                if os.path.exists(tts_fn):
+                    continue
+                
                 if (role=="User" and (args.inference_target=="user" or args.inference_target=="both")) or (role=="Machine" and (args.inference_target=="machine" or args.inference_target=="both")):
                     tts_speech = text_to_speech(
                         ref_speaker=ref_mapping[role],
