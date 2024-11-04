@@ -30,7 +30,8 @@ for mode in zero_shot; do
             --hifigan_model $pretrained_model_dir/hift.pt \
             --result_dir $2 \
             --start_index $3 \
-            --inference_target both
+            --num_example $4 \
+            --inference_target user
         done
     done
 done

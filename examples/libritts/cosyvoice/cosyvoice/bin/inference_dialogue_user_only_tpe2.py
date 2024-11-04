@@ -99,7 +99,9 @@ def main():
     args = get_args()
     device = get_device(args)
     configs = read_config(args)
-    random.seed(1234)
+    
+    dataset_random_seed = int(hashlib.sha256(os.path.abspath(args.dialogue).encode('utf-8')).hexdigest(), 16) % 10**8
+    random.seed(args.start_index + dataset_random_seed) #1234
 
     model = load_model(args, configs)
     normalizer = CosyVoiceNormalizer()
