@@ -157,7 +157,7 @@ def split_sentence(long_sentence):
             if temp:
                 processed_sentences.append(temp.strip("，"))
         else:
-            # If the sentence part is less than 50 characters, add directly
+            # If the sentence part is less than 45 characters, add directly
             processed_sentences.append(part)
     
     # Add processed sentences to the final list
