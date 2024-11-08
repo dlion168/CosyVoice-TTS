@@ -146,7 +146,7 @@ def split_sentence(long_sentence):
             
             for sub_part in sub_parts:
                 # Check the length of the accumulated segment
-                if len(temp + sub_part) < 50:
+                if len(temp + sub_part) < 45:
                     temp += sub_part + "，"  # Add "，" to each part for cohesion
                 else:
                     # Append the accumulated sentence and reset
