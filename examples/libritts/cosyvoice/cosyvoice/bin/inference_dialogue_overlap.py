@@ -226,6 +226,8 @@ def main():
                     shorter_sentences, _ = split_sentence(msg)
                     all_speech_segments = []
                     for shorter_sentence in shorter_sentences:
+                        if shorter_sentence.strip() == "":
+                            continue
                         tts_speech = text_to_speech(
                             ref_speaker=ref_mapping[role],
                             texts=[shorter_sentence],
