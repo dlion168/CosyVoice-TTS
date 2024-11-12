@@ -2,7 +2,7 @@ import os
 import json
 import random
 import argparse
-import re
+import logging
 from tqdm import tqdm
 from functools import partial
 from hyperpyyaml import load_hyperpyyaml
@@ -15,14 +15,18 @@ from cosyvoice.cli.model import CosyVoiceModel
 from cosyvoice.dataset.dataset import DataList, Processor
 from cosyvoice.utils.file_utils import read_lists, read_json_lists
 from cosyvoice.utils.normalize import CosyVoiceNormalizer
-from cosyvoice.utils.environment_sound import separate_text_and_sound, combine_speech_and_environment
+from cosyvoice.utils.environment_sound_class import EnvironmentalSoundGenerator
 
 def get_args() -> argparse.Namespace:
+
+
     parser = argparse.ArgumentParser(description='inference with your model')
     parser.add_argument('--dialogue', required=True, help='dialogue file')
     parser.add_argument('--config', required=True, help='config file')
     parser.add_argument('--prompt_data', required=True, help='prompt data file')
     parser.add_argument('--prompt_utt2data', required=True, help='prompt data file')
+    parser.add_argument('--machine_data', required=True, help='prompt data file')
+    parser.add_argument('--machine_utt2data', required=True, help='prompt data file')
     parser.add_argument('--llm_model', required=True, help='llm model file')
     parser.add_argument('--flow_model', required=True, help='flow model file')
     parser.add_argument('--hifigan_model', required=True, help='hifigan model file')
@@ -37,7 +41,18 @@ def get_args() -> argparse.Namespace:
                         choices=['sft', 'zero_shot'],
                         help='inference mode')
     parser.add_argument('--result_dir', required=True, help='asr result file')
+    parser.add_argument('--data_dir', required=True, help='data for the environmental sound')
+    parser.add_argument('--metadata_filename', required=True, help='file containing metadata for the environmental sound')
+    parser.add_argument('--audio_subpath', required=True, help='folder of audio subpath')
+
     args = parser.parse_args()
+
+    logging.basicConfig(
+        filename=f"{args.dialogue}.log",  # Log file name
+        level=logging.INFO,  # Set the logging level (e.g., DEBUG, INFO, WARNING, ERROR, CRITICAL)
+        format='%(asctime)s - %(levelname)s - %(message)s'  # Log message format
+    )
+
     print(args)
     return args
 
@@ -105,6 +120,8 @@ def main():
 
     model = load_model(args, configs)
     all_possible_references = read_json_lists(args.prompt_utt2data).keys()
+    machine_references = read_json_lists(args.machine_utt2data).keys()
+    environment_sound_generator = EnvironmentalSoundGenerator(args.data_dir, args.metadata_filename, args.audio_subpath)
 
     os.makedirs(args.result_dir, exist_ok=True)
     with open(args.dialogue, 'r', encoding='utf-8') as f:
@@ -112,45 +129,59 @@ def main():
         inference_segment = all_data[args.start_index: args.start_index + args.num_example]
 
         for index, dialouge in tqdm(enumerate(inference_segment)):
+            dialogue_index = index + args.start_index
+
+            machine_wav = '{:06d}_Machine_1.wav'.format(dialogue_index)
+            user_wav = '{:06d}_User_1.wav'.format(dialogue_index)
+
+            if os.path.exists(os.path.join(args.result_dir, machine_wav)) and os.path.exists(os.path.join(args.result_dir, user_wav)):
+                continue
+
             dialogue = json.loads(dialouge.strip())
             user_reference = random_sample_reference(all_possible_references)
-            machine_reference = random_sample_reference(all_possible_references)
+            machine_reference = random_sample_reference(machine_references)
             ref_mapping = {user_reference: 'User', machine_reference: 'Machine'}
 
             environment_sounds = []
-            for dialogue_key in dialogue.keys():
-                if dialogue_key.startswith('User_'):
-                    dialogue[dialogue_key], environment_sound = separate_text_and_sound(dialogue[dialogue_key])
-                    environment_sounds.append(environment_sound)
 
-            tts_data = {
+            try:
+                for dialogue_key in dialogue.keys():
+                    if dialogue_key.startswith('User_'):
+                        dialogue[dialogue_key], environment_sound = environment_sound_generator.separate_text_and_sound(dialogue[dialogue_key])
+                        environment_sounds.append(environment_sound)
+            except:
+                logging.log(logging.ERROR, "Error in separating text and sound in dialogue {}".format(dialogue_index))
+                continue
+
+            user_tts_data = {
                 user_reference: [
                     normalizer.text_normalize(dialogue[key]) for key in dialogue.keys() if key.startswith('User_')
                 ],
+            }
+            machine_tts_data = {
                 machine_reference: [
                     normalizer.text_normalize(dialogue[key]) for key in dialogue.keys() if key.startswith('Machine_')
                 ]
             }
 
 
-            test_dataset = Dataset(args.prompt_data, data_pipeline=configs['data_pipeline'], mode='inference', shuffle=False, partition=False, tts_data=tts_data, prompt_utt2data=args.prompt_utt2data)
+            test_dataset = Dataset(args.prompt_data, data_pipeline=configs['data_pipeline'], mode='inference', shuffle=False, partition=False, tts_data=user_tts_data, prompt_utt2data=args.prompt_utt2data)
             test_dataloader = DataLoader(test_dataset, batch_size=None, num_workers=0)
+
+            machine_dataset = Dataset(args.machine_data, data_pipeline=configs['data_pipeline'], mode='inference', shuffle=False, partition=False, tts_data=machine_tts_data, prompt_utt2data=args.machine_utt2data)
+            machine_dataloader = DataLoader(machine_dataset, batch_size=None, num_workers=0)
 
             speechs = {
                 'User': [],
                 'Machine': []
             }
 
-            dialogue_index = index + args.start_index
-            merge_tts_key = '{:06d}_all'.format(dialogue_index)
-            merge_tts_fn = os.path.join(args.result_dir, '{}.wav'.format(merge_tts_key))
-            if os.path.exists(merge_tts_fn):
-                continue
 
             with torch.no_grad():
-                for _, batch in enumerate(test_dataloader):
+                def generate_speechs(batch):
                     utts = batch["utts"]
                     assert len(utts) == 1, "inference mode only support batchsize 1"
+
                     text_token = batch["text_token"].to(device)
                     text_token_len = batch["text_token_len"].to(device)
                     tts_index = batch["tts_index"]
@@ -162,6 +193,7 @@ def main():
                     speech_feat_len = batch["speech_feat_len"].to(device)
                     utt_embedding = batch["utt_embedding"].to(device)
                     spk_embedding = batch["spk_embedding"].to(device)
+
                     if args.mode == 'sft':
                         model_input = {'text': tts_text_token, 'text_len': tts_text_token_len,
                                     'llm_embedding': spk_embedding, 'flow_embedding': spk_embedding}
@@ -173,11 +205,8 @@ def main():
                                     'prompt_speech_feat': speech_feat, 'prompt_speech_feat_len': speech_feat_len,
                                     'llm_embedding': utt_embedding, 'flow_embedding': utt_embedding}
 
-                    tts_key = '{:06d}_{}_{}'.format(dialogue_index, ref_mapping[utts[0]], tts_index[0])
+                    tts_key = '{:06d}_{}_{}'.format(dialogue_index, ref_mapping[utts[0]], tts_index[0] + 1)
                     tts_fn = os.path.join(args.result_dir, '{}.wav'.format(tts_key))
-                    if os.path.exists(tts_fn):
-                        continue
-
                     tts_speeches = []
                     # print(model.inference(**model_input))
                     # for model_output in model.inference(**model_input):
@@ -190,20 +219,14 @@ def main():
                     # print("tts_index: {}".format(tts_index[0]))
                     tts_speeches = torch.concat(tts_speeches, dim=1)
                     if ref_mapping[utts[0]].startswith('User'):
-                        tts_speeches = combine_speech_and_environment(tts_speeches, environment_sounds[tts_index[0]])
+                        tts_speeches = environment_sound_generator.combine_speech_and_environment(tts_speeches, environment_sounds[tts_index[0]])
                     torchaudio.save(tts_fn, tts_speeches, sample_rate=22050)
 
-            # tts_key = '{:06d}_all'.format(dialogue_index)
-            # tts_fn = os.path.join(args.result_dir, '{}.wav'.format(tts_key))
-            # if len(speechs['User']) != 7 or len(speechs['Machine']) != 7:
-            #     user_files = [os.path.join(args.result_dir, '{:06d}_User_{}.wav'.format(dialogue_index, i)) for i in range(7)]
-            #     machine_files = [os.path.join(args.result_dir, '{:06d}_Machine_{}.wav'.format(dialogue_index, i)) for i in range(7)]
-            #     speechs = {
-            #         'User': [torchaudio.load(f)[0] for f in user_files],
-            #         'Machine': [torchaudio.load(f)[0] for f in machine_files]
-            #     }
-            # merged_speeches = merge_speechs(speechs)
-            # torchaudio.save(tts_fn, merged_speeches, sample_rate=22050)
+                for _, (batch_user, batch_machine) in enumerate(zip(test_dataloader, machine_dataloader)):
+                    generate_speechs(batch_user)
+                    generate_speechs(batch_machine)  
+
+            logging.log(logging.INFO, "Dialogue {}, User {}, Machine {}".format(dialogue_index, user_reference, machine_reference))            
 
 if __name__ == "__main__":
     main()
