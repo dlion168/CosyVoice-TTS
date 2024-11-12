@@ -1,16 +1,12 @@
 import re
 import json
 import random
-import wave
-import numpy as np
 import torch
 import torchaudio
-
 
 data_dir = "/nfs/nas-6.1/cjtsao/environmental_sound/DataGeneration/fsd50k"
 with open(f"{data_dir}/label_id.json", "r") as f:
     label_to_ids = json.load(f)
-
 
 def parse_tag(tag):
     tag = tag[1:-1]
@@ -25,10 +21,20 @@ def parse_tag(tag):
         return parsed_dict
     return None
 
-def audio_normalize(audio, volume=1):
-    denominator = max(abs(audio.max()), abs(audio.min()))
-    audio = audio / denominator * volume
+def adjust_loudness(audio, ref_audio, db):
+    # Calculate the gain required to match the loudness of the reference audio
+    ref_rms = ref_audio.abs().mean()
+    rms = audio.abs().mean()
+    gain = 10 ** ((ref_rms - rms) / 20)
+    audio = audio * gain
+
+    # Calculate the gain required to adjust the loudness to the specified dB level
+    scaling_factor = 10 ** (db / 20)
+    audio = audio * scaling_factor
+    audio = audio.clamp(-1, 1)
+
     return audio
+
 
 def generate_environmental_sound(tag):
     config = parse_tag(tag)
@@ -41,20 +47,27 @@ def generate_environmental_sound(tag):
     new_sample_rate = 22050
     resampler = torchaudio.transforms.Resample(sample_rate, new_sample_rate)
     waveform = resampler(waveform)
-    audio_tensor = audio_normalize(waveform, volume=config.get("volume", 1))
     time_limit = 3
-    audio_tensor = audio_tensor[:, :new_sample_rate * time_limit]
+    audio_tensor = waveform[:, :new_sample_rate * time_limit]
     return audio_tensor
 
 def extract_environment_tag(text, matches):
     total_tag_length = 0
     for i, match in enumerate(matches):
+        arguments = match[0][1:-1].split()
+
         matches[i] = {
             "tag": match[0],
             "type": "interleave" if match[0][0] == "[" else "background",
             "position": (match[1] - total_tag_length) / len(text),
             "audio": generate_environmental_sound(match[0])
         }
+
+        for arg in arguments[1:]:
+            key, value = arg.split("=")
+            matches[i][key] = value
+        
+        print(match)
         print(matches[i]["audio"].size())
         total_tag_length += len(match[0])
     return matches
@@ -76,6 +89,8 @@ def combine_speech_and_environment(speech, tags):
     tag = tags[0]
     speech = speech[0]
     tag_audio = tag["audio"][0]
+
+    tag_audio = adjust_loudness(audio=tag_audio, ref_audio=speech, db=float(tag["rel_db"]))
     
     # Calculate the insertion position
     position = int(speech.size(0) * tag["position"])
@@ -102,11 +117,11 @@ def combine_speech_and_environment(speech, tags):
 # Example usage
 
 if __name__ == "__main__":
-    text, tags = separate_text_and_sound("<Boiling volume=0.1> 有沒有聽到什麼聲音？")
+    text, tags = separate_text_and_sound("<Boiling rel_db=1> 有沒有聽到什麼聲音？")
 
     print("Text after removal:", text)
     print("Tags with indices:", tags)
 
-    example_audio, sample_rate = torchaudio.load("/nfs/nas-6.1/cjtsao/environmental_sound/CosyVoice-TTS/examples/libritts/cosyvoice/test_dir/000000_User_0.wav")
-    combined_audio = combine_speech_and_environment(example_audio, tags[0])
-    torchaudio.save("combined_audio.wav", combined_audio, sample_rate=22050)
+    example_audio, sample_rate = torchaudio.load("/nfs/nas-6.1/cjtsao/environmental_sound/CosyVoice-TTS/examples/libritts/cosyvoice/test_dir/000015_User_0.wav")
+    combined_audio = combine_speech_and_environment(example_audio, tags)
+    torchaudio.save("test_combined_audio.wav", combined_audio, sample_rate=22050)
