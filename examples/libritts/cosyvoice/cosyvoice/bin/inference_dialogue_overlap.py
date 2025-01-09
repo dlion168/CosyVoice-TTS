@@ -122,6 +122,52 @@ def text_to_speech(ref_speaker, texts, model, args, configs, device, role):
             tts_speech = torch.concat(tts_speech, dim=1)
     return tts_speech
 
+def split_sentence(long_sentence):
+    # Define a list to hold all the shorter sentences
+    shorter_sentences = []
+    
+    # Define Chinese punctuation marks that indicate sentence boundaries
+    punctuation_marks = r'[。！？]'
+    
+    # Split the long sentence based on punctuation marks
+    split_result = [s + re.search(r'[。！？]', long_sentence).group(0) if s else '' for s in re.findall(r'.+?[。！？]', long_sentence)]
+    
+    # Check for edge case where there are no punctuation marks
+    if not split_result:
+        split_result = [long_sentence]
+    
+    processed_sentences = []
+    
+    for part in split_result:
+        if len(part) > 45:
+            # Further split by "，" if the sentence has more than 50 characters
+            sub_parts = re.split('，', part)
+            temp = ""
+            
+            for sub_part in sub_parts:
+                # Check the length of the accumulated segment
+                if len(temp + sub_part) < 45:
+                    temp += sub_part + "，"  # Add "，" to each part for cohesion
+                else:
+                    # Append the accumulated sentence and reset
+                    processed_sentences.append(temp.strip("，"))
+                    temp = sub_part + "，"
+            
+            # Append any remaining segment after the loop
+            if temp:
+                processed_sentences.append(temp.strip("，"))
+        else:
+            # If the sentence part is less than 45 characters, add directly
+            processed_sentences.append(part)
+    
+    # Add processed sentences to the final list
+    shorter_sentences.extend(processed_sentences)
+    
+    # Count the number of resulting shorter sentences
+    sentence_count = len(processed_sentences)
+    
+    return shorter_sentences, sentence_count
+
 def main():
     args = get_args()
     device = get_device(args)
@@ -177,16 +223,23 @@ def main():
                     continue
                 
                 if (role=="User" and (args.inference_target=="user" or args.inference_target=="both")) or (role=="Machine" and (args.inference_target=="machine" or args.inference_target=="both")):
-                    tts_speech = text_to_speech(
-                        ref_speaker=ref_mapping[role],
-                        texts=[msg],
-                        model=cosyvoice,
-                        args=args,
-                        configs=configs,
-                        device=device,
-                        role=role
-                    )
-                    torchaudio.save(tts_fn, tts_speech, sample_rate=22050)
+                    shorter_sentences, _ = split_sentence(msg)
+                    all_speech_segments = []
+                    for shorter_sentence in shorter_sentences:
+                        if shorter_sentence.strip() == "":
+                            continue
+                        tts_speech = text_to_speech(
+                            ref_speaker=ref_mapping[role],
+                            texts=[shorter_sentence],
+                            model=cosyvoice,
+                            args=args,
+                            configs=configs,
+                            device=device,
+                            role=role
+                        )
+                        all_speech_segments.append(tts_speech)
+                    final_speech = torch.cat(all_speech_segments, dim=1)
+                    torchaudio.save(tts_fn, final_speech, sample_rate=22050)
 
 if __name__ == "__main__":
     main()
